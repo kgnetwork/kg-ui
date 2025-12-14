@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>KG Network UI</title>
+    <link rel="stylesheet" href="./assets/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand__title">内域运行系统监控大屏</div>
+          <div class="brand__sub">KG Network UI（自定义前端）</div>
+        </div>
+        <div class="topbar__right">
+          <div class="pill">
+            <span class="pill__label">后端</span>
+            <span id="apiBaseText" class="pill__value">-</span>
+          </div>
+          <button class="btn btn--ghost" id="openSettingsBtn">设置</button>
+        </div>
+      </header>
+
+      <aside class="sidebar">
+        <nav class="nav">
+          <a class="nav__item" href="#/portal">总览</a>
+          <a class="nav__item" href="#/graph">图谱视图</a>
+          <a class="nav__item" href="#/search">检索</a>
+          <a class="nav__item" href="#/import">导入</a>
+          <a class="nav__item" href="#/refresh">刷新/状态</a>
+          <a class="nav__item" href="#/agents">智能体状态</a>
+          <a class="nav__item" href="#/ui">UI</a>
+        </nav>
+
+        <div class="sidebar__footer">
+          <div class="kv">
+            <div class="kv__k">提示</div>
+            <div class="kv__v">默认调用 `kg-network` 的 `openapi` / `status` / `ui/api/*`。</div>
+          </div>
+        </div>
+      </aside>
+
+      <main class="main">
+        <div id="viewRoot" class="view"></div>
+      </main>
+    </div>
+
+    <div class="modal" id="settingsModal" aria-hidden="true">
+      <div class="modal__backdrop" data-close></div>
+      <div class="modal__panel">
+        <div class="modal__header">
+          <div class="modal__title">设置</div>
+          <button class="btn btn--ghost" data-close>关闭</button>
+        </div>
+        <div class="modal__body">
+          <div class="form">
+            <label class="form__label" for="apiBaseInput">kg-network Base URL</label>
+            <input
+              class="input"
+              id="apiBaseInput"
+              placeholder="例如：http://127.0.0.1:5000"
+              autocomplete="off"
+            />
+            <div class="form__hint">
+              前后端分离：此页面可通过任意静态服务器部署；后端地址通过此处配置（保存在浏览器 localStorage）。
+            </div>
+            <div class="form__actions">
+              <button class="btn" id="saveSettingsBtn">保存</button>
+              <button class="btn btn--ghost" id="resetSettingsBtn">恢复默认</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="./assets/app.js"></script>
+  </body>
+</html>
