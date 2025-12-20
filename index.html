@@ -11,7 +11,7 @@
       <header class="topbar">
         <div class="brand">
           <div class="brand__title">内域运行系统监控大屏</div>
-          <div class="brand__sub">KG Network UI（自定义前端）</div>
+          <div class="brand__sub"></div>
         </div>
         <div class="topbar__right">
           <div class="pill">
@@ -30,15 +30,11 @@
           <a class="nav__item" href="#/import">导入</a>
           <a class="nav__item" href="#/refresh">刷新/状态</a>
           <a class="nav__item" href="#/agents">智能体状态</a>
+          <a class="nav__item" href="#/proxy">路由服务</a>
+          <a class="nav__item" href="#/agent">I类智能体</a>
           <a class="nav__item" href="#/ui">UI</a>
         </nav>
 
-        <div class="sidebar__footer">
-          <div class="kv">
-            <div class="kv__k">提示</div>
-            <div class="kv__v">默认调用 `kg-network` 的 `openapi` / `status` / `ui/api/*`。</div>
-          </div>
-        </div>
       </aside>
 
       <main class="main">
@@ -55,15 +51,15 @@
         </div>
         <div class="modal__body">
           <div class="form">
-            <label class="form__label" for="apiBaseInput">kg-network Base URL</label>
-            <input
-              class="input"
-              id="apiBaseInput"
-              placeholder="例如：http://127.0.0.1:5000"
-              autocomplete="off"
-            />
+            <label class="form__label" for="serviceTypeSelect">智能体类型</label>
+            <select class="select" id="serviceTypeSelect"></select>
+
+            <label class="form__label" for="endpointSelect">选择服务</label>
+            <select class="select" id="endpointSelect"></select>
+            <button class="btn btn--ghost" id="addAgentBtn" type="button" style="display:none; margin-top:8px;">添加 I 类地址</button>
+
             <div class="form__hint">
-              前后端分离：此页面可通过任意静态服务器部署；后端地址通过此处配置（保存在浏览器 localStorage）。
+              配置来自 kg-ui/config.json；II/III 聚合端点，I类预置少量示例，允许手工添加。
             </div>
             <div class="form__actions">
               <button class="btn" id="saveSettingsBtn">保存</button>

@@ -1,0 +1,72 @@
+{
+  "services": [
+    {
+      "id": "III_node_01",
+      "label": "III类智能体",
+      "endpoints": [
+        {
+          "ui": "network",
+          "base_url": "http://192.168.1.60:5000",
+          "roles": [
+            "中心服务",
+            "分片服务"
+          ]
+        }
+      ],
+      "notes": "在没有指定地址默认进入此实体UI"
+    },
+    {
+      "id": "III_node_02",
+      "label": "III类智能体",
+      "endpoints": [
+        {
+          "ui": "network",
+          "base_url": "http://192.168.1.52:5000",
+          "roles": [
+            "分片服务"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "II_node_01",
+      "label": "II类智能体",
+      "endpoints": [
+        {
+          "ui": "network",
+          "base_url": "http://192.168.1.5:5000",
+          "roles": [
+            "自治服务"
+          ]
+        },
+        {
+          "ui": "proxy",
+          "base_url": "http://192.168.1.5:5001",
+          "roles": [
+            "路由服务"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "I_agents",
+      "label": "I类智能体",
+      "ui": "agent",
+      "allow_dynamic": true,
+      "agents": [
+        {
+          "base_url": "http://192.168.1.5:8888",
+          "id": "I_node_888"
+        },
+        {
+          "base_url": "http://192.168.1.60:8888",
+          "id": "I_node_01"
+        }
+      ]
+    }
+  ],
+  "defaults": {
+    "ui": "network",
+    "timeout_ms": 30000
+  }
+}

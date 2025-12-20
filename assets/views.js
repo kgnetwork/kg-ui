@@ -1,4 +1,4 @@
-import { apiFetch, downloadUrl } from "./api.js";
+import { apiFetch, downloadUrl, loadApiMeta } from "./api.js";
 import { CanvasGraph } from "./graph.js";
 
 function el(html) {
@@ -28,7 +28,7 @@ export function renderPortal() {
     <section class="view__section">
       <div class="view__header">
         <div class="view__title">总览</div>
-        <div class="muted">以 ` + "`tasks/Picture1.png`" + ` / ` + "`tasks/Picture2.png`" + ` 的配色风格实现。</div>
+        <div class="muted"></div>
       </div>
       <div class="view__body">
         <div class="grid grid--3">
@@ -82,6 +82,25 @@ export function renderPortal() {
 }
 
 export function renderGraph() {
+  const metaInfo = loadApiMeta();
+  if (metaInfo?.ui && metaInfo.ui !== "network") {
+    const root = el(`
+      <section>
+        <div class="view__header">
+          <div class="view__title">图谱视图</div>
+        </div>
+        <div class="view__body">
+          <div class="panel">
+            <div class="panel__hd">当前后端不支持</div>
+            <div class="panel__bd">
+              <div class="muted">当前选择的后端类型为 ${metaInfo.ui}，未提供 /ui/api/graph。</div>
+            </div>
+          </div>
+        </div>
+      </section>
+    `);
+    return root;
+  }
   const root = el(`
     <section>
       <div class="view__header">
@@ -681,10 +700,29 @@ export function renderSearch() {
 }
 
 export function renderAgents() {
+  const metaInfo = loadApiMeta();
+  if (metaInfo?.ui && metaInfo.ui !== "network") {
+    const root = el(`
+      <section>
+        <div class="view__header">
+          <div class="view__title">智能体状态</div>
+        </div>
+        <div class="view__body">
+          <div class="panel">
+            <div class="panel__hd">当前后端不支持</div>
+            <div class="panel__bd">
+              <div class="muted">当前选择的后端类型为 ${metaInfo.ui}，未提供 /ui/api/graph，无法展示智能体状态。</div>
+            </div>
+          </div>
+        </div>
+      </section>
+    `);
+    return root;
+  }
   const root = el(`
     <section>
       <div class="view__header">
-        <div class="view__title">智能体状态</div>
+        <div class="view__title">智能体状态（network base）</div>
         <div style="display:flex; gap:8px; align-items:center;">
           <button class="btn" id="reload">刷新</button>
         </div>
@@ -768,7 +806,6 @@ export function renderUiHome() {
     <section>
       <div class="view__header">
         <div class="view__title">/ui（兼容页）</div>
-        <div class="muted">等价于后端原 /ui、/ui/znt_list、/ui/znt_detail 的功能入口，但完全由新前端实现。</div>
       </div>
       <div class="view__body">
         <div class="grid grid--3">
@@ -1008,6 +1045,9 @@ export function renderUiZntDetail({ zntType, zntName }) {
   setTimeout(load, 0);
   return root;
 }
+
+// Re-export placeholder to satisfy legacy imports (proxy UI moved to views_proxy.js).
+export { renderProxyHome } from "./views_proxy.js";
 
 function escapeHtml(s) {
   return String(s)

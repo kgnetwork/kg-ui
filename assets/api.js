@@ -1,16 +1,33 @@
 const DEFAULT_API_BASE = "http://127.0.0.1:5000";
+const STORAGE_KEY_BASE = "KG_API_BASE";
+const STORAGE_KEY_META = "KG_API_META"; // { ui, serviceId, endpointId?, agentId?, base_url }
 
 export function getApiBase() {
-  const v = (localStorage.getItem("KG_API_BASE") || "").trim();
+  const v = (localStorage.getItem(STORAGE_KEY_BASE) || "").trim();
   return v || DEFAULT_API_BASE;
 }
 
 export function setApiBase(v) {
-  localStorage.setItem("KG_API_BASE", (v || "").trim());
+  localStorage.setItem(STORAGE_KEY_BASE, (v || "").trim());
 }
 
 export function resetApiBase() {
-  localStorage.removeItem("KG_API_BASE");
+  localStorage.removeItem(STORAGE_KEY_BASE);
+}
+
+export function saveApiMeta(meta) {
+  try {
+    localStorage.setItem(STORAGE_KEY_META, JSON.stringify(meta || {}));
+  } catch (_) {}
+}
+
+export function loadApiMeta() {
+  try {
+    const m = JSON.parse(localStorage.getItem(STORAGE_KEY_META) || "{}");
+    return m || {};
+  } catch (_) {
+    return {};
+  }
 }
 
 function joinUrl(base, path) {
@@ -41,4 +58,3 @@ export async function apiFetch(path, { method = "GET", headers = {}, body, timeo
 export function downloadUrl(path) {
   return joinUrl(getApiBase(), path);
 }
-
