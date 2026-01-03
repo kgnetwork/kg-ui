@@ -1,4 +1,5 @@
 import { apiFetch, downloadUrl, loadApiMeta } from "./api.js";
+import { loadConfig, normalizeServices, parseConfig } from "./config.js";
 import { CanvasGraph } from "./graph.js";
 
 function el(html) {
@@ -386,6 +387,82 @@ export function renderImport() {
             </div>
           </div>
         </div>
+
+        <div class="panel" style="margin-top:16px;">
+          <div class="panel__hd">批量导入（I / II 分开操作）</div>
+          <div class="panel__bd">
+            <div style="display:flex; gap:8px; margin-bottom:12px;">
+              <button class="btn" id="bulkTabI">I 类批量操作</button>
+              <button class="btn btn--ghost" id="bulkTabII">II 类批量操作</button>
+            </div>
+
+            <div id="bulkPanelI">
+              <div class="form">
+                <input class="input" type="file" id="bulkIFile" accept=".json,application/json" />
+                <div class="form__hint">I 类导入：POST /api/update-node?znt=&lt;id&gt;（逐台发送）</div>
+              </div>
+              <div class="panel" style="margin-top:12px;">
+                <div class="panel__hd">I 类设备（来自 config.json，可多选，允许新增）</div>
+                <div class="panel__bd">
+                  <div style="display:flex; gap:8px; margin-bottom:8px;">
+                    <button class="btn btn--ghost" id="bulkISelectAll">全选</button>
+                    <button class="btn btn--ghost" id="bulkIClearAll">全不选</button>
+                  </div>
+                  <div id="bulkIList" class="list"></div>
+                  <div style="display:flex; gap:8px; margin-top:10px; align-items:center; flex-wrap:wrap;">
+                    <input class="input" id="bulkIAddId" placeholder="I 类 ID (必填)" style="width:200px;" />
+                    <input class="input" id="bulkIAddAddr" placeholder="http://x.x.x.x:8888" style="width:260px;" />
+                    <button class="btn btn--ghost" id="bulkIAddBtn">添加地址</button>
+                  </div>
+                </div>
+              </div>
+              <div style="display:flex; gap:8px; margin-top:12px;">
+                <button class="btn" id="bulkIStart">开始批量导入</button>
+                <button class="btn btn--ghost" id="bulkIClear">清空所选设备知识库</button>
+              </div>
+              <div class="muted" id="bulkIMeta" style="margin-top:8px;">-</div>
+              <div class="panel panel--scroll" style="margin-top:10px;">
+                <div class="panel__hd">执行结果</div>
+                <div class="panel__bd">
+                  <table class="table">
+                    <thead><tr><th>target</th><th>status</th><th>message</th></tr></thead>
+                    <tbody id="bulkIResult"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <div id="bulkPanelII" style="display:none;">
+              <div class="form">
+                <input class="input" type="file" id="bulkIIFile" accept=".json,application/json" />
+                <div class="form__hint">II 类导入：POST /adapter/import（逐台发送）</div>
+              </div>
+              <div class="panel" style="margin-top:12px;">
+                <div class="panel__hd">II 类设备（来自 config.json，可多选）</div>
+                <div class="panel__bd">
+                  <div style="display:flex; gap:8px; margin-bottom:8px;">
+                    <button class="btn btn--ghost" id="bulkIISelectAll">全选</button>
+                    <button class="btn btn--ghost" id="bulkIIClearAll">全不选</button>
+                  </div>
+                  <div id="bulkIIList" class="list"></div>
+                </div>
+              </div>
+              <div style="display:flex; gap:8px; margin-top:12px;">
+                <button class="btn" id="bulkIIStart">开始批量导入</button>
+              </div>
+              <div class="muted" id="bulkIIMeta" style="margin-top:8px;">-</div>
+              <div class="panel panel--scroll" style="margin-top:10px;">
+                <div class="panel__hd">执行结果</div>
+                <div class="panel__bd">
+                  <table class="table">
+                    <thead><tr><th>target</th><th>status</th><th>message</th></tr></thead>
+                    <tbody id="bulkIIResult"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
   `);
@@ -396,6 +473,268 @@ export function renderImport() {
   const downloadLink = root.querySelector("#downloadJobLog");
   let pollTimer = 0;
   let activeJobId = "";
+  const bulkTabI = root.querySelector("#bulkTabI");
+  const bulkTabII = root.querySelector("#bulkTabII");
+  const bulkPanelI = root.querySelector("#bulkPanelI");
+  const bulkPanelII = root.querySelector("#bulkPanelII");
+  const bulkIList = root.querySelector("#bulkIList");
+  const bulkIIList = root.querySelector("#bulkIIList");
+  const bulkIResult = root.querySelector("#bulkIResult");
+  const bulkIIResult = root.querySelector("#bulkIIResult");
+  const bulkIMeta = root.querySelector("#bulkIMeta");
+  const bulkIIMeta = root.querySelector("#bulkIIMeta");
+
+  const BULK_I_KEY = "KG_BULK_I_LIST";
+
+  function normalizeBaseUrl(url) {
+    if (!url) return "";
+    if (/^https?:\/\//i.test(url)) return url;
+    return `http://${url}`;
+  }
+
+  function loadBulkIExtra() {
+    try {
+      const data = JSON.parse(localStorage.getItem(BULK_I_KEY) || "[]");
+      return Array.isArray(data) ? data : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function saveBulkIExtra(list) {
+    try {
+      localStorage.setItem(BULK_I_KEY, JSON.stringify(list || []));
+    } catch (_) {}
+  }
+
+  async function loadBulkTargets() {
+    try {
+      const raw = await loadConfig();
+      const parsed = parseConfig(raw);
+      const services = normalizeServices(parsed.services);
+      const iTargets = [];
+      const iiTargets = [];
+
+      const seenI = new Set();
+      const seenIId = new Set();
+      const seenIAddr = new Set();
+      const seenII = new Set();
+
+      services.forEach((s) => {
+        const label = s.label || "";
+        const isI = s.ui === "agent" || label.includes("I");
+        if (isI) {
+          (s.agents || []).forEach((a) => {
+            const id = (a.id || "").trim();
+            const base = normalizeBaseUrl(a.base_url || "");
+            const key = `${id}@${base}`;
+            if (!id || !base || seenI.has(key) || seenIId.has(id) || seenIAddr.has(base)) return;
+            seenI.add(key);
+            seenIId.add(id);
+            seenIAddr.add(base);
+            iTargets.push({ id, base_url: base });
+          });
+        }
+
+        (s.endpoints || []).forEach((ep) => {
+          const roles = ep.roles || [];
+          const isIIAutonomy = roles.includes("自治服务");
+          if (!isIIAutonomy) return;
+          const base = normalizeBaseUrl(ep.base_url || "");
+          if (!base) return;
+          if (seenII.has(base)) return;
+          seenII.add(base);
+          iiTargets.push({ base_url: base, roles: roles || [] });
+        });
+      });
+
+      loadBulkIExtra().forEach((a) => {
+        const id = (a.id || "").trim();
+        const base = normalizeBaseUrl(a.base_url || "");
+        const key = `${id}@${base}`;
+        if (!id || !base || seenI.has(key) || seenIId.has(id) || seenIAddr.has(base)) return;
+        seenI.add(key);
+        seenIId.add(id);
+        seenIAddr.add(base);
+        iTargets.push({ id, base_url: base, manual: true });
+      });
+
+      return { iTargets, iiTargets };
+    } catch (err) {
+      console.error("bulk targets load error", err);
+      return { iTargets: [], iiTargets: [] };
+    }
+  }
+
+  function renderIList(targets) {
+    bulkIList.innerHTML = "";
+    targets.forEach((t, idx) => {
+      const row = document.createElement("label");
+      row.style.display = "flex";
+      row.style.alignItems = "center";
+      row.style.gap = "8px";
+      row.style.marginBottom = "6px";
+      row.innerHTML = `
+        <input type="checkbox" data-id="${t.id}" data-url="${t.base_url}" />
+        <span class="mono">${t.id}</span>
+        <span class="muted">${t.base_url}</span>
+      `;
+      bulkIList.appendChild(row);
+    });
+    if (!targets.length) {
+      bulkIList.innerHTML = `<div class="muted">暂无 I 类设备，请添加地址。</div>`;
+    }
+  }
+
+  function renderIIList(targets) {
+    bulkIIList.innerHTML = "";
+    targets.forEach((t) => {
+      const row = document.createElement("label");
+      row.style.display = "flex";
+      row.style.alignItems = "center";
+      row.style.gap = "8px";
+      row.style.marginBottom = "6px";
+      row.innerHTML = `
+        <input type="checkbox" data-url="${t.base_url}" />
+        <span class="mono">${t.base_url}</span>
+      `;
+      bulkIIList.appendChild(row);
+    });
+    if (!targets.length) {
+      bulkIIList.innerHTML = `<div class="muted">暂无 II 类设备。</div>`;
+    }
+  }
+
+  function getCheckedTargets(container, withId = false) {
+    const rows = Array.from(container.querySelectorAll("input[type=checkbox]:checked"));
+    return rows.map((el) => ({
+      id: el.dataset.id || "",
+      base_url: el.dataset.url || "",
+    })).filter((t) => t.base_url && (!withId || t.id));
+  }
+
+  async function readJsonFile(file) {
+    const text = await file.text();
+    try {
+      return JSON.parse(text);
+    } catch (_) {
+      throw new Error("JSON 解析失败");
+    }
+  }
+
+  async function fetchWithTimeout(url, options = {}, timeoutMs = 30000) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const resp = await fetch(url, { ...options, signal: controller.signal });
+      const text = await resp.text().catch(() => "");
+      return { ok: resp.ok, status: resp.status, body: text };
+    } catch (err) {
+      return { ok: false, status: 0, body: String(err) };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  function fillResult(tbody, results) {
+    tbody.innerHTML = "";
+    results.forEach((r) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td class="mono">${r.target}</td><td>${r.ok ? "success" : "failed"}</td><td class="muted">${r.message || ""}</td>`;
+      tbody.appendChild(tr);
+    });
+  }
+
+  async function bulkImportI() {
+    const file = root.querySelector("#bulkIFile").files?.[0];
+    if (!file) {
+      bulkIMeta.textContent = "请选择 JSON 文件";
+      return;
+    }
+    const targets = getCheckedTargets(bulkIList, true);
+    if (!targets.length) {
+      bulkIMeta.textContent = "请选择至少一个 I 类设备";
+      return;
+    }
+    if (!window.confirm("确认对所选 I 类设备执行批量导入？")) return;
+
+    let payload;
+    try {
+      payload = await readJsonFile(file);
+    } catch (err) {
+      bulkIMeta.textContent = String(err);
+      return;
+    }
+
+    bulkIMeta.textContent = `执行中：${targets.length} 台`;
+    const results = [];
+    for (const t of targets) {
+      const url = `${t.base_url.replace(/\/+$/, "")}/api/update-node?znt=${encodeURIComponent(t.id)}`;
+      const res = await fetchWithTimeout(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }, 60000);
+      results.push({ target: `${t.id}@${t.base_url}`, ok: res.ok, message: res.ok ? `HTTP ${res.status}` : res.body || `HTTP ${res.status}` });
+    }
+    fillResult(bulkIResult, results);
+    bulkIMeta.textContent = `完成：${results.length} 台`;
+  }
+
+  async function bulkClearI() {
+    const targets = getCheckedTargets(bulkIList, true);
+    if (!targets.length) {
+      bulkIMeta.textContent = "请选择至少一个 I 类设备";
+      return;
+    }
+    if (!window.confirm("确认清空所选 I 类设备知识库？此操作不可恢复。")) return;
+
+    bulkIMeta.textContent = `执行中：${targets.length} 台`;
+    const results = [];
+    for (const t of targets) {
+      const url = `${t.base_url.replace(/\/+$/, "")}/api/clear-knowledge?znt=${encodeURIComponent(t.id)}`;
+      const res = await fetchWithTimeout(url, { method: "POST" }, 30000);
+      results.push({ target: `${t.id}@${t.base_url}`, ok: res.ok, message: res.ok ? `HTTP ${res.status}` : res.body || `HTTP ${res.status}` });
+    }
+    fillResult(bulkIResult, results);
+    bulkIMeta.textContent = `完成：${results.length} 台`;
+  }
+
+  async function bulkImportII() {
+    const file = root.querySelector("#bulkIIFile").files?.[0];
+    if (!file) {
+      bulkIIMeta.textContent = "请选择 JSON 文件";
+      return;
+    }
+    const targets = getCheckedTargets(bulkIIList, false);
+    if (!targets.length) {
+      bulkIIMeta.textContent = "请选择至少一个 II 类设备";
+      return;
+    }
+    if (!window.confirm("确认对所选 II 类设备执行批量导入？")) return;
+
+    let payload;
+    try {
+      payload = await readJsonFile(file);
+    } catch (err) {
+      bulkIIMeta.textContent = String(err);
+      return;
+    }
+
+    bulkIIMeta.textContent = `执行中：${targets.length} 台`;
+    const results = [];
+    for (const t of targets) {
+      const url = `${t.base_url.replace(/\/+$/, "")}/adapter/import`;
+      const res = await fetchWithTimeout(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }, 60000);
+      results.push({ target: t.base_url, ok: res.ok, message: res.ok ? `HTTP ${res.status}` : res.body || `HTTP ${res.status}` });
+    }
+    fillResult(bulkIIResult, results);
+    bulkIIMeta.textContent = `完成：${results.length} 台`;
+  }
 
   function stopPoll() {
     if (pollTimer) window.clearInterval(pollTimer);
@@ -473,7 +812,74 @@ export function renderImport() {
     startPoll(activeJobId);
   });
 
+  function setTab(tab) {
+    if (tab === "II") {
+      bulkPanelI.style.display = "none";
+      bulkPanelII.style.display = "block";
+      bulkTabI.classList.add("btn--ghost");
+      bulkTabII.classList.remove("btn--ghost");
+    } else {
+      bulkPanelI.style.display = "block";
+      bulkPanelII.style.display = "none";
+      bulkTabII.classList.add("btn--ghost");
+      bulkTabI.classList.remove("btn--ghost");
+    }
+  }
+
+  bulkTabI.addEventListener("click", () => setTab("I"));
+  bulkTabII.addEventListener("click", () => setTab("II"));
+
+  root.querySelector("#bulkISelectAll").addEventListener("click", () => {
+    bulkIList.querySelectorAll("input[type=checkbox]").forEach((el) => (el.checked = true));
+  });
+  root.querySelector("#bulkIClearAll").addEventListener("click", () => {
+    bulkIList.querySelectorAll("input[type=checkbox]").forEach((el) => (el.checked = false));
+  });
+  root.querySelector("#bulkIISelectAll").addEventListener("click", () => {
+    bulkIIList.querySelectorAll("input[type=checkbox]").forEach((el) => (el.checked = true));
+  });
+  root.querySelector("#bulkIIClearAll").addEventListener("click", () => {
+    bulkIIList.querySelectorAll("input[type=checkbox]").forEach((el) => (el.checked = false));
+  });
+
+  root.querySelector("#bulkIAddBtn").addEventListener("click", () => {
+    const id = (root.querySelector("#bulkIAddId").value || "").trim();
+    const addr = (root.querySelector("#bulkIAddAddr").value || "").trim();
+    if (!id || !addr) {
+      bulkIMeta.textContent = "请输入 I 类 ID 和地址";
+      return;
+    }
+    const existing = Array.from(bulkIList.querySelectorAll("input[type=checkbox]")).map((el) => ({
+      id: (el.dataset.id || "").trim(),
+      base_url: (el.dataset.url || "").trim(),
+    }));
+    const normAddr = normalizeBaseUrl(addr);
+    const hasSameId = existing.some((t) => t.id === id);
+    const hasSameAddr = existing.some((t) => t.base_url === normAddr);
+    if (hasSameId || hasSameAddr) {
+      bulkIMeta.textContent = hasSameId ? "已存在相同 I 类 ID" : "已存在相同 I 类地址";
+      return;
+    }
+    const list = loadBulkIExtra();
+    list.push({ id, base_url: normAddr });
+    saveBulkIExtra(list);
+    initBulkTargets();
+    root.querySelector("#bulkIAddId").value = "";
+    root.querySelector("#bulkIAddAddr").value = "";
+  });
+
+  root.querySelector("#bulkIStart").addEventListener("click", bulkImportI);
+  root.querySelector("#bulkIClear").addEventListener("click", bulkClearI);
+  root.querySelector("#bulkIIStart").addEventListener("click", bulkImportII);
+
+  async function initBulkTargets() {
+    const { iTargets, iiTargets } = await loadBulkTargets();
+    renderIList(iTargets);
+    renderIIList(iiTargets);
+  }
+
   setTimeout(refreshJobs, 0);
+  setTimeout(initBulkTargets, 0);
   return root;
 }
 
