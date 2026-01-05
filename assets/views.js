@@ -393,7 +393,7 @@ export function renderImport() {
           <div class="panel__bd">
             <div style="display:flex; gap:8px; margin-bottom:12px;">
               <button class="btn" id="bulkTabI">I 类批量操作</button>
-              <button class="btn btn--ghost" id="bulkTabII">II 类批量操作</button>
+              <button class="btn btn--ghost" id="bulkTabII">II/III 类批量操作</button>
             </div>
 
             <div id="bulkPanelI">
