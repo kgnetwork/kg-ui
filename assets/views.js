@@ -692,7 +692,7 @@ export function renderImport() {
     bulkIMeta.textContent = `执行中：${targets.length} 台`;
     const results = [];
     for (const t of targets) {
-      const url = `${t.base_url.replace(/\/+$/, "")}/api/clear-knowledge?znt=${encodeURIComponent(t.id)}`;
+      const url = `${t.base_url.replace(/\/+$/, "")}/api/delete_all_knowledge?znt=${encodeURIComponent(t.id)}`;
       const res = await fetchWithTimeout(url, { method: "POST" }, 30000);
       results.push({ target: `${t.id}@${t.base_url}`, ok: res.ok, message: res.ok ? `HTTP ${res.status}` : res.body || `HTTP ${res.status}` });
     }
