@@ -2,6 +2,7 @@ import { getApiBase, resetApiBase, setApiBase, saveApiMeta, loadApiMeta } from "
 import { loadConfig, normalizeServices, parseConfig } from "./config.js";
 import {
   renderAgents,
+  renderFiles,
   renderGraph,
   renderImport,
   renderPortal,
@@ -241,6 +242,7 @@ function rebuildNav(uiType) {
     items.push({ href: "#/graph", label: "图谱视图" });
     items.push({ href: "#/search", label: "检索" });
     items.push({ href: "#/import", label: "导入" });
+    items.push({ href: "#/files", label: "文件/日志" });
     items.push({ href: "#/refresh", label: "刷新/状态" });
     items.push({ href: "#/agents", label: "智能体状态" });
     items.push({ href: "#/ui", label: "UI" });
@@ -277,6 +279,7 @@ function route() {
   if (p === "graph") return mount(uiType === "network" ? renderGraph() : notSupported("图谱视图"));
   if (p === "search") return mount(uiType === "network" ? renderSearch() : notSupported("检索"));
   if (p === "import") return mount(uiType === "network" ? renderImport() : notSupported("导入"));
+  if (p === "files") return mount(uiType === "network" ? renderFiles() : notSupported("文件/日志"));
   if (p === "refresh") return mount(uiType === "network" ? renderRefresh() : notSupported("刷新/状态"));
   if (p === "agents") return mount(uiType === "network" ? renderAgents() : notSupported("智能体状态"));
   if (p === "proxy") return mount(renderProxyHome());

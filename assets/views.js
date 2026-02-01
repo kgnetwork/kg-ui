@@ -883,6 +883,273 @@ export function renderImport() {
   return root;
 }
 
+export function renderFiles() {
+  const root = el(`
+    <section>
+      <div class="view__header">
+        <div class="view__title">文件/日志</div>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <select class="select" id="fileBrowserSelect" style="width:240px;"></select>
+          <button class="btn btn--ghost" id="fileBack">返回上级</button>
+          <button class="btn" id="fileReload">刷新</button>
+          <a class="btn btn--ghost" id="fileOpenRoot" target="_blank" href="#" style="display:none;">打开原始目录</a>
+        </div>
+      </div>
+      <div class="view__body">
+        <div class="panel">
+          <div class="panel__hd">目录列表</div>
+          <div class="panel__bd">
+            <div class="muted" id="fileStatus">-</div>
+            <div class="muted" id="fileBreadcrumb" style="margin-top:6px;"></div>
+            <div style="margin-top:10px; overflow:auto;">
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th>名称</th>
+                    <th>类型</th>
+                    <th>大小</th>
+                    <th>修改时间</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="fileListBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  `);
+
+  const select = root.querySelector("#fileBrowserSelect");
+  const backBtn = root.querySelector("#fileBack");
+  const reloadBtn = root.querySelector("#fileReload");
+  const openRoot = root.querySelector("#fileOpenRoot");
+  const status = root.querySelector("#fileStatus");
+  const breadcrumb = root.querySelector("#fileBreadcrumb");
+  const body = root.querySelector("#fileListBody");
+
+  let browsers = [];
+  let currentPath = "";
+
+  function normalizeBaseUrl(base) {
+    if (!base) return "";
+    return base.endsWith("/") ? base : `${base}/`;
+  }
+
+  function resolveBaseUrl(browser) {
+    if (!browser) return "";
+    if (browser.base_url) return browser.base_url;
+    const path = browser.path || "";
+    if (!path) return "";
+    const safePath = path.startsWith("/") ? path : `/${path}`;
+    return `${window.location.origin}${safePath}`;
+  }
+
+  function normalizePath(path) {
+    if (!path) return "";
+    return String(path).replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, "") + "/";
+  }
+
+  function currentUrl(base) {
+    const baseNorm = normalizeBaseUrl(base);
+    if (!baseNorm) return "";
+    if (!currentPath) return baseNorm;
+    return new URL(currentPath, baseNorm).toString();
+  }
+
+  function joinUrl(base, name, isDir) {
+    const baseNorm = normalizeBaseUrl(base);
+    if (!baseNorm) return "#";
+    const parts = String(name || "")
+      .split("/")
+      .filter((p) => p.length > 0)
+      .map((p) => encodeURIComponent(p));
+    const suffix = isDir ? "/" : "";
+    return new URL(`${parts.join("/")}${suffix}`, baseNorm).toString();
+  }
+
+  function sizeText(size) {
+    const n = Number(size);
+    if (!Number.isFinite(n) || n < 0) return "-";
+    const units = ["B", "KB", "MB", "GB", "TB"];
+    let v = n;
+    let idx = 0;
+    while (v >= 1024 && idx < units.length - 1) {
+      v /= 1024;
+      idx += 1;
+    }
+    const digits = v < 10 && idx > 0 ? 1 : 0;
+    return `${v.toFixed(digits)} ${units[idx]}`;
+  }
+
+  function renderOptions() {
+    select.innerHTML = "";
+    if (!browsers.length) {
+      const opt = document.createElement("option");
+      opt.value = "";
+      opt.textContent = "未配置目录";
+      select.appendChild(opt);
+      select.disabled = true;
+      return;
+    }
+    select.disabled = false;
+    browsers.forEach((b, idx) => {
+      const opt = document.createElement("option");
+      opt.value = b.id || String(idx);
+      opt.textContent = b.title || b.path || b.base_url || `目录 ${idx + 1}`;
+      select.appendChild(opt);
+    });
+  }
+
+  function pickBrowser() {
+    if (!browsers.length) return null;
+    const target = select.value;
+    return browsers.find((b, idx) => (b.id || String(idx)) === target) || browsers[0];
+  }
+
+  function setStatus(text) {
+    status.textContent = text || "-";
+  }
+
+  function renderRows(entries, base) {
+    body.innerHTML = "";
+    const filtered = (entries || []).filter((item) => {
+      const name = item?.name || item?.filename || item?.path || "";
+      return name && name !== "." && name !== "..";
+    });
+    if (!filtered.length) {
+      body.innerHTML = `<tr><td colspan="5" class="muted">暂无文件</td></tr>`;
+      return;
+    }
+    filtered.forEach((item) => {
+      const rawName = item?.name || item?.filename || item?.path || "-";
+      const rawType = String(item?.type || "").toLowerCase();
+      const isDir = rawType === "directory" || rawType === "dir" || item?.isdir === true || String(rawName).endsWith("/");
+      const name = String(rawName).replace(/\/$/, "");
+      const typeText = isDir ? "目录" : "文件";
+      const url = joinUrl(base, name, isDir);
+      const mtime = item?.mtime || item?.modified || item?.time || "-";
+      const size = item?.size ?? item?.bytes ?? "-";
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td class="mono">${name}</td>
+        <td>${typeText}</td>
+        <td>${sizeText(size)}</td>
+        <td>${mtime}</td>
+        <td>
+          ${
+            isDir
+              ? `<button class="btn btn--ghost" data-dir="${name}">进入</button>`
+              : `<a class="btn btn--ghost" target="_blank" href="${url}">打开</a>`
+          }
+        </td>
+      `;
+      body.appendChild(tr);
+    });
+    body.querySelectorAll("button[data-dir]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const dir = btn.dataset.dir || "";
+        currentPath = normalizePath(`${currentPath}${dir}`);
+        load();
+      });
+    });
+  }
+
+  function renderBreadcrumb(base) {
+    const parts = currentPath.split("/").filter(Boolean);
+    const items = [];
+    items.push(`<a href="#" data-path="">根目录</a>`);
+    let acc = "";
+    parts.forEach((p) => {
+      acc += `${p}/`;
+      items.push(`<a href="#" data-path="${acc}">${p}</a>`);
+    });
+    breadcrumb.innerHTML = `当前位置：${items.join(" / ")}`;
+    breadcrumb.querySelectorAll("a").forEach((a) => {
+      a.addEventListener("click", (e) => {
+        e.preventDefault();
+        currentPath = a.dataset.path || "";
+        load();
+      });
+    });
+    backBtn.disabled = !currentPath;
+    backBtn.style.opacity = backBtn.disabled ? "0.6" : "1";
+    const openUrl = currentUrl(base);
+    openRoot.href = openUrl;
+  }
+
+  async function load() {
+    const browser = pickBrowser();
+    if (!browser) {
+      openRoot.style.display = "none";
+      setStatus("未配置目录");
+      breadcrumb.textContent = "";
+      renderRows([], "");
+      return;
+    }
+    const base = resolveBaseUrl(browser);
+    if (!base) {
+      openRoot.style.display = "none";
+      setStatus("目录配置不完整");
+      breadcrumb.textContent = "";
+      renderRows([], "");
+      return;
+    }
+    const url = currentUrl(base);
+    openRoot.href = url;
+    openRoot.style.display = "inline-block";
+    setStatus("加载中...");
+    renderBreadcrumb(base);
+    try {
+      const resp = await fetch(url, { cache: "no-cache" });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      let entries = [];
+      if (Array.isArray(data)) entries = data;
+      else if (Array.isArray(data.entries)) entries = data.entries;
+      else if (Array.isArray(data.list)) entries = data.list;
+      renderRows(entries, url);
+      setStatus(`当前目录：/${currentPath || ""} 共 ${entries.length} 项（来源：${url}）`);
+    } catch (err) {
+      console.error("file browser load failed", err);
+      setStatus("加载失败（确认 Nginx 已开启 autoindex_format json）");
+      renderRows([], url);
+    }
+  }
+
+  reloadBtn.addEventListener("click", load);
+  select.addEventListener("change", () => {
+    currentPath = "";
+    load();
+  });
+  backBtn.addEventListener("click", () => {
+    if (!currentPath) return;
+    const parts = currentPath.split("/").filter(Boolean);
+    parts.pop();
+    currentPath = parts.length ? `${parts.join("/")}/` : "";
+    load();
+  });
+
+  setTimeout(async () => {
+    try {
+      const raw = await loadConfig();
+      const parsed = parseConfig(raw);
+      browsers = Array.isArray(parsed?.defaults?.file_browsers) ? parsed.defaults.file_browsers : [];
+    } catch (err) {
+      console.error("file browser config load error", err);
+      browsers = [];
+    }
+    renderOptions();
+    if (browsers.length) {
+      select.value = browsers[0].id || "0";
+    }
+    load();
+  }, 0);
+
+  return root;
+}
+
 export function renderRefresh() {
   const root = el(`
     <section>

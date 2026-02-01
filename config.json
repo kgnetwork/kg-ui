@@ -67,6 +67,22 @@
   ],
   "defaults": {
     "ui": "network",
-    "timeout_ms": 30000
+    "timeout_ms": 30000,
+    "file_browsers": [
+      {
+        "id": "files",
+        "title": "文件列表",
+        "path": "/files/",
+        "mode": "autoindex-json",
+        "open_target": "_blank"
+      },
+      {
+        "id": "task-logs",
+        "title": "任务日志",
+        "path": "/logs/",
+        "mode": "autoindex-json",
+        "open_target": "_blank"
+      }
+    ]
   }
 }
