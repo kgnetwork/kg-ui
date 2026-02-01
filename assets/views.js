@@ -393,7 +393,7 @@ export function renderImport() {
           <div class="panel__bd">
             <div style="display:flex; gap:8px; margin-bottom:12px;">
               <button class="btn" id="bulkTabI">I 类批量操作</button>
-              <button class="btn btn--ghost" id="bulkTabII">II 类批量操作</button>
+              <button class="btn btn--ghost" id="bulkTabII">II/III 类批量操作</button>
             </div>
 
             <div id="bulkPanelI">
@@ -692,8 +692,8 @@ export function renderImport() {
     bulkIMeta.textContent = `执行中：${targets.length} 台`;
     const results = [];
     for (const t of targets) {
-      const url = `${t.base_url.replace(/\/+$/, "")}/api/clear-knowledge?znt=${encodeURIComponent(t.id)}`;
-      const res = await fetchWithTimeout(url, { method: "POST" }, 30000);
+      const url = `${t.base_url.replace(/\/+$/, "")}/api/delete_all_knowledge?znt=${encodeURIComponent(t.id)}`;
+      const res = await fetchWithTimeout(url, { method: "DELETE" }, 30000);
       results.push({ target: `${t.id}@${t.base_url}`, ok: res.ok, message: res.ok ? `HTTP ${res.status}` : res.body || `HTTP ${res.status}` });
     }
     fillResult(bulkIResult, results);
