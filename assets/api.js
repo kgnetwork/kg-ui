@@ -40,7 +40,8 @@ export async function apiFetch(path, { method = "GET", headers = {}, body, timeo
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const resp = await fetch(joinUrl(getApiBase(), path), {
+    const url = joinUrl(getApiBase(), path);
+    const resp = await fetch(url, {
       method,
       headers,
       body,
@@ -48,8 +49,43 @@ export async function apiFetch(path, { method = "GET", headers = {}, body, timeo
     });
     const contentType = resp.headers.get("Content-Type") || "";
     const isJson = contentType.includes("application/json");
-    const payload = isJson ? await resp.json().catch(() => null) : await resp.text().catch(() => "");
-    return { ok: resp.ok, status: resp.status, headers: resp.headers, payload };
+    
+    if (isJson) {
+      const text = await resp.text().catch(() => "");
+      // 修复非法 JSON 值: Infinity, -Infinity, NaN
+      const sanitized = text
+        .replace(/:-Infinity\b/g, ':null')
+        .replace(/:Infinity\b/g, ':null')
+        .replace(/:NaN\b/g, ':null')
+        .replace(/\[-Infinity\b/g, '[null')
+        .replace(/\[Infinity\b/g, '[null')
+        .replace(/,Infinity\b/g, ',null')
+        .replace(/,-Infinity\b/g, ',null')
+        .replace(/,NaN\b/g, ',null');
+      try {
+        const payload = JSON.parse(sanitized);
+        return { ok: resp.ok, status: resp.status, headers: resp.headers, payload };
+      } catch (parseErr) {
+        // 提取错误位置附近的上下文
+        const posMatch = parseErr.message.match(/position (\d+)/);
+        const errorPos = posMatch ? parseInt(posMatch[1], 10) : 0;
+        const contextStart = Math.max(0, errorPos - 50);
+        const contextEnd = Math.min(sanitized.length, errorPos + 50);
+        const context = sanitized.slice(contextStart, contextEnd);
+        console.error(`[apiFetch] JSON 解析失败:`, parseErr.message);
+        console.error(`[apiFetch] 错误位置 ${errorPos} 附近内容:`, context);
+        return { ok: resp.ok, status: resp.status, headers: resp.headers, payload: null };
+      }
+    }
+    
+    // 即使 Content-Type 不是 application/json，也尝试解析 JSON
+    const text = await resp.text().catch(() => "");
+    try {
+      const payload = JSON.parse(text);
+      return { ok: resp.ok, status: resp.status, headers: resp.headers, payload };
+    } catch (_) {
+      return { ok: resp.ok, status: resp.status, headers: resp.headers, payload: text };
+    }
   } finally {
     clearTimeout(timer);
   }

@@ -299,6 +299,11 @@ export function renderGraph() {
       meta.textContent = `加载失败：HTTP ${status} ${JSON.stringify(payload)}`;
       return;
     }
+    if (!payload || !Array.isArray(payload.nodes)) {
+      meta.textContent = `加载失败：响应数据格式无效`;
+      fullData = { nodes: [], edges: [] };
+      return;
+    }
     fullData = payload;
     renderFilters();
     applyFilters();
