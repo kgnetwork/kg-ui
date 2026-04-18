@@ -43,7 +43,7 @@ export function renderPortal() {
           </div>
           <div class="card">
             <div class="card__title">检索</div>
-            <div class="card__desc">关键字检索（名称/标题），支持按资源类型筛选。</div>
+            <div class="card__desc">关键字检索，支持名称搜索与全字段搜索，并可按资源类型筛选。</div>
             <div class="card__actions">
               <a class="btn" href="#/search">进入</a>
             </div>
@@ -1249,12 +1249,17 @@ export function renderRefresh() {
 }
 
 export function renderSearch() {
+  const SEARCH_MODE_KEY = "KG_SEARCH_MODE";
   const root = el(`
     <section>
       <div class="view__header">
         <div class="view__title">检索</div>
         <div style="display:flex; gap:8px; align-items:center;">
           <input class="input" id="kw" placeholder="关键字（name/title）" style="width:260px;" />
+          <select class="select" id="searchMode" style="width:160px;">
+            <option value="search">名称搜索</option>
+            <option value="search_all">全字段搜索</option>
+          </select>
           <select class="select" id="type" style="width:220px;">
             <option value="">全部类型</option>
             <option value="znt-i">znt-i</option>
@@ -1294,10 +1299,20 @@ export function renderSearch() {
   `);
 
   const kw = root.querySelector("#kw");
+  const searchMode = root.querySelector("#searchMode");
   const type = root.querySelector("#type");
   const rows = root.querySelector("#rows");
   const meta = root.querySelector("#detailMeta");
   const detail = root.querySelector("#detailJson");
+
+  const savedSearchMode = localStorage.getItem(SEARCH_MODE_KEY) || "search";
+  if (savedSearchMode === "search" || savedSearchMode === "search_all") {
+    searchMode.value = savedSearchMode;
+  }
+
+  function updateSearchPlaceholder() {
+    kw.placeholder = searchMode.value === "search_all" ? "关键字（全字段搜索，可能较慢）" : "关键字（name/title）";
+  }
 
   function inferResourceType(labels) {
     if (!Array.isArray(labels)) return null;
@@ -1338,7 +1353,7 @@ export function renderSearch() {
     meta.textContent = "搜索中…";
     detail.textContent = "";
 
-    const headers = { "X-Resource-Op": "search" };
+    const headers = { "X-Resource-Op": searchMode.value };
     if (type.value) headers["X-Resource-Type"] = type.value;
 
     const { ok, status, payload } = await apiFetch(`/openapi${toQuery({ keyword, limit: 50 })}`, { headers });
@@ -1349,7 +1364,7 @@ export function renderSearch() {
     }
     const items = payload?.items || payload?.results || payload || [];
     const arr = Array.isArray(items) ? items : payload?.items || [];
-    meta.textContent = `结果数：${arr.length}`;
+    meta.textContent = `${searchMode.value === "search_all" ? "全字段搜索" : "名称搜索"} 结果数：${arr.length}`;
 
     for (const it of arr) {
       const data = it?.data || it?.n || it;
@@ -1373,6 +1388,11 @@ export function renderSearch() {
   kw.addEventListener("keydown", (e) => {
     if (e.key === "Enter") search();
   });
+  searchMode.addEventListener("change", () => {
+    localStorage.setItem(SEARCH_MODE_KEY, searchMode.value);
+    updateSearchPlaceholder();
+  });
+  updateSearchPlaceholder();
 
   return root;
 }
