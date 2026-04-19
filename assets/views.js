@@ -122,6 +122,8 @@ export function renderGraph() {
             <option value="30">最近 30 分钟</option>
             <option value="120">最近 2 小时</option>
           </select>
+          <button class="btn btn--ghost" id="graphZoomOut">缩小</button>
+          <button class="btn btn--ghost" id="graphZoomIn">放大</button>
           <button class="btn btn--ghost" id="graphReset">重置视角</button>
           <button class="btn" id="graphReload">重新加载</button>
           <a class="btn btn--ghost" target="_blank" href="${downloadUrl("/api/dump")}">导出 JSON</a>
@@ -196,6 +198,8 @@ export function renderGraph() {
   const search = root.querySelector("#graphSearch");
   const maxNodesSel = root.querySelector("#maxNodes");
   const win = root.querySelector("#highlightWindow");
+  const zoomOutBtn = root.querySelector("#graphZoomOut");
+  const zoomInBtn = root.querySelector("#graphZoomIn");
   const filtersEl = root.querySelector("#graphFilters");
   const selectionMeta = root.querySelector("#selectionMeta");
   const selectionJson = root.querySelector("#selectionJson");
@@ -394,7 +398,9 @@ export function renderGraph() {
   }
 
   root.querySelector("#graphReload").addEventListener("click", load);
-  root.querySelector("#graphReset").addEventListener("click", () => graph.resetView());
+  root.querySelector("#graphReset").addEventListener("click", () => graph.fitToContent());
+  zoomOutBtn.addEventListener("click", () => graph.zoomOut());
+  zoomInBtn.addEventListener("click", () => graph.zoomIn());
   search.addEventListener("input", () => graph.setSearchTerm(search.value));
   maxNodesSel.addEventListener("change", () => {
     maxNodes = Number(maxNodesSel.value || "0") || 0;

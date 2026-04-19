@@ -20,6 +20,8 @@ const KIND_SHAPES = {
 
 const STATIC_LAYOUT_NODE_THRESHOLD = 10000;
 const STATIC_LAYOUT_EDGE_THRESHOLD = 5000;
+const MAX_COORD_ABS = 200000;
+const FIT_MIN_SCALE = 0.02;
 
 function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
@@ -138,9 +140,9 @@ function applyRepulsion(root, node, strength, theta, jitter) {
     const w = q.x1 - q.x0;
     if (!q.children || (w * w) / dist2 < theta * theta) {
       const inv = 1 / Math.sqrt(dist2);
-      const f = (strength * q.mass) * inv * inv;
-      node._vx -= dx * f;
-      node._vy -= dy * f;
+      const force = strength * q.mass * inv * inv;
+      node._vx -= dx * force;
+      node._vy -= dy * force;
     } else {
       for (const c of q.children) stack.push(c);
     }
@@ -159,6 +161,17 @@ function distPointToSegment(px, py, ax, ay, bx, by) {
   const cx = ax + t * abx;
   const cy = ay + t * aby;
   return Math.hypot(px - cx, py - cy);
+}
+
+function isFiniteCoord(value) {
+  return Number.isFinite(value) && Math.abs(value) <= MAX_COORD_ABS;
+}
+
+function resetNodePosition(node, cx, cy, spreadX, spreadY) {
+  node._x = cx + (Math.random() - 0.5) * spreadX;
+  node._y = cy + (Math.random() - 0.5) * spreadY;
+  node._vx = 0;
+  node._vy = 0;
 }
 
 export class CanvasGraph {
@@ -211,11 +224,22 @@ export class CanvasGraph {
     this.nodes = Array.isArray(nodes) ? nodes : [];
     this.edges = Array.isArray(edges) ? edges : [];
     this.nodeIndex = new Map(this.nodes.map((n) => [n.id, n]));
-    this.resetView();
+    this.resetView(true);
+
+    if (!this.nodes.length) {
+      this._sim = null;
+      this.render();
+      return;
+    }
+
     if (this.nodes.length > STATIC_LAYOUT_NODE_THRESHOLD || this.edges.length > STATIC_LAYOUT_EDGE_THRESHOLD) {
       this._initStaticLayout();
     } else {
       this._initSimulation();
+    }
+
+    if (this._needsAutoFit()) {
+      this.fitToContent(true);
     }
     this.render();
   }
@@ -235,11 +259,51 @@ export class CanvasGraph {
     this.render();
   }
 
-  resetView() {
+  resetView(silent = false) {
     this.scale = 1;
     this.offsetX = 0;
     this.offsetY = 0;
-    this.render();
+    if (!silent) this.render();
+  }
+
+  fitToContent(silent = false) {
+    if (!this.nodes.length) {
+      this.resetView(silent);
+      return;
+    }
+
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    let validCount = 0;
+    for (const node of this.nodes) {
+      if (!isFiniteCoord(node._x) || !isFiniteCoord(node._y)) continue;
+      validCount += 1;
+      minX = Math.min(minX, node._x);
+      minY = Math.min(minY, node._y);
+      maxX = Math.max(maxX, node._x);
+      maxY = Math.max(maxY, node._y);
+    }
+
+    if (!validCount) {
+      this.resetView(silent);
+      return;
+    }
+
+    const viewWidth = this.canvas.width || 1;
+    const viewHeight = this.canvas.height || 1;
+    const pad = 48 * this.dpr;
+    const worldWidth = Math.max(maxX - minX, 1);
+    const worldHeight = Math.max(maxY - minY, 1);
+    const scaleX = (viewWidth - pad * 2) / worldWidth;
+    const scaleY = (viewHeight - pad * 2) / worldHeight;
+
+    this.scale = clamp(Math.min(scaleX, scaleY), FIT_MIN_SCALE, 6);
+    this.offsetX = viewWidth / 2 - ((minX + maxX) / 2) * this.scale;
+    this.offsetY = viewHeight / 2 - ((minY + maxY) / 2) * this.scale;
+
+    if (!silent) this.render();
   }
 
   setSelectionChangeHandler(fn) {
@@ -276,6 +340,41 @@ export class CanvasGraph {
     this.offsetX = px - wx * this.scale;
     this.offsetY = py - wy * this.scale;
     this.render();
+  }
+
+  zoomIn() {
+    const rect = this.canvas.getBoundingClientRect();
+    this.zoom(-1, rect.left + rect.width / 2, rect.top + rect.height / 2);
+  }
+
+  zoomOut() {
+    const rect = this.canvas.getBoundingClientRect();
+    this.zoom(1, rect.left + rect.width / 2, rect.top + rect.height / 2);
+  }
+
+  _needsAutoFit() {
+    if (!this.nodes.length) return false;
+
+    const pad = 64;
+    const viewWidth = this.canvas.width || 1;
+    const viewHeight = this.canvas.height || 1;
+    let visibleCount = 0;
+
+    for (const node of this.nodes) {
+      if (!isFiniteCoord(node._x) || !isFiniteCoord(node._y)) {
+        return true;
+      }
+      if (
+        node._x >= -pad &&
+        node._x <= viewWidth + pad &&
+        node._y >= -pad &&
+        node._y <= viewHeight + pad
+      ) {
+        visibleCount += 1;
+      }
+    }
+
+    return visibleCount === 0;
   }
 
   _bindEvents() {
@@ -331,14 +430,15 @@ export class CanvasGraph {
     const cx = rect.width / 2;
     const cy = rect.height / 2;
     this.layoutMode = "simulation";
+    const spreadX = Math.max(rect.width * 0.6, 200);
+    const spreadY = Math.max(rect.height * 0.6, 200);
 
-    for (const n of this.nodes) {
-      if (typeof n._x !== "number" || typeof n._y !== "number") {
-        n._x = cx + (Math.random() - 0.5) * rect.width * 0.6;
-        n._y = cy + (Math.random() - 0.5) * rect.height * 0.6;
+    for (const node of this.nodes) {
+      if (!isFiniteCoord(node._x) || !isFiniteCoord(node._y)) {
+        resetNodePosition(node, cx, cy, spreadX, spreadY);
       }
-      if (typeof n._vx !== "number") n._vx = 0;
-      if (typeof n._vy !== "number") n._vy = 0;
+      if (!Number.isFinite(node._vx)) node._vx = 0;
+      if (!Number.isFinite(node._vy)) node._vy = 0;
     }
 
     this._sim = {
@@ -372,21 +472,17 @@ export class CanvasGraph {
       .sort((a, b) => String(a.kind || "").localeCompare(String(b.kind || "")) || String(a.id || "").localeCompare(String(b.id || "")));
 
     for (let i = 0; i < orderedNodes.length; i++) {
-      const n = orderedNodes[i];
+      const node = orderedNodes[i];
       const radius = step * Math.sqrt(i);
       const angle = i * goldenAngle;
-      n._x = cx + Math.cos(angle) * radius;
-      n._y = cy + Math.sin(angle) * radius;
-      n._vx = 0;
-      n._vy = 0;
+      node._x = cx + Math.cos(angle) * radius;
+      node._y = cy + Math.sin(angle) * radius;
+      node._vx = 0;
+      node._vy = 0;
     }
 
     this.layoutMode = "static";
     this._sim = null;
-  }
-
-  _worldToScreen(x, y) {
-    return { x: x * this.scale + this.offsetX, y: y * this.scale + this.offsetY };
   }
 
   _screenToWorld(x, y) {
@@ -396,13 +492,14 @@ export class CanvasGraph {
   _pickNode(wx, wy) {
     let best = null;
     let bestDist = 1e9;
-    for (const n of this.nodes) {
-      const dx = wx - n._x;
-      const dy = wy - n._y;
+    for (const node of this.nodes) {
+      if (!isFiniteCoord(node._x) || !isFiniteCoord(node._y)) continue;
+      const dx = wx - node._x;
+      const dy = wy - node._y;
       const d2 = dx * dx + dy * dy;
       if (d2 < bestDist) {
         bestDist = d2;
-        best = n;
+        best = node;
       }
     }
     const hitR = 9 / this.scale;
@@ -413,14 +510,14 @@ export class CanvasGraph {
     const tol = 7 / this.scale;
     let best = null;
     let bestD = 1e9;
-    for (const e of this.edges) {
-      const a = this.nodeIndex.get(e.source);
-      const b = this.nodeIndex.get(e.target);
+    for (const edge of this.edges) {
+      const a = this.nodeIndex.get(edge.source);
+      const b = this.nodeIndex.get(edge.target);
       if (!a || !b) continue;
       const d = distPointToSegment(wx, wy, a._x, a._y, b._x, b._y);
       if (d < tol && d < bestD) {
         bestD = d;
-        best = { ...e };
+        best = { ...edge };
       }
     }
     return best;
@@ -489,19 +586,25 @@ export class CanvasGraph {
     const s = this._sim;
     if (s.alpha < s.alphaMin) return false;
 
+    const rect = this.canvas.getBoundingClientRect();
+    const spreadX = Math.max(rect.width * 0.5, 180);
+    const spreadY = Math.max(rect.height * 0.5, 180);
+
     let minX = Infinity;
     let minY = Infinity;
     let maxX = -Infinity;
     let maxY = -Infinity;
-    for (const n of this.nodes) {
-      if (typeof n._x !== "number" || typeof n._y !== "number") continue;
-      if (n._x < minX) minX = n._x;
-      if (n._y < minY) minY = n._y;
-      if (n._x > maxX) maxX = n._x;
-      if (n._y > maxY) maxY = n._y;
+    for (const node of this.nodes) {
+      if (!isFiniteCoord(node._x) || !isFiniteCoord(node._y) || !Number.isFinite(node._vx) || !Number.isFinite(node._vy)) {
+        resetNodePosition(node, s.cx, s.cy, spreadX, spreadY);
+      }
+      minX = Math.min(minX, node._x);
+      minY = Math.min(minY, node._y);
+      maxX = Math.max(maxX, node._x);
+      maxY = Math.max(maxY, node._y);
     }
+
     if (!isFinite(minX) || !isFinite(minY) || !isFinite(maxX) || !isFinite(maxY)) {
-      const rect = this.canvas.getBoundingClientRect();
       minX = 0;
       minY = 0;
       maxX = rect.width;
@@ -514,13 +617,13 @@ export class CanvasGraph {
     const y1 = maxY + s.boundsPad;
     const tree = buildQuadtree(this.nodes, x0, y0, x1, y1);
 
-    for (const n of this.nodes) {
-      applyRepulsion(tree, n, s.charge * s.alpha, s.theta, s.jitter);
+    for (const node of this.nodes) {
+      applyRepulsion(tree, node, s.charge * s.alpha, s.theta, s.jitter);
     }
 
-    for (const e of this.edges) {
-      const a = this.nodeIndex.get(e.source);
-      const b = this.nodeIndex.get(e.target);
+    for (const edge of this.edges) {
+      const a = this.nodeIndex.get(edge.source);
+      const b = this.nodeIndex.get(edge.target);
       if (!a || !b) continue;
       let dx = b._x - a._x;
       let dy = b._y - a._y;
@@ -537,14 +640,18 @@ export class CanvasGraph {
       b._vy -= fy;
     }
 
-    for (const n of this.nodes) {
-      n._vx += (s.cx - n._x) * s.centerStrength * s.alpha;
-      n._vy += (s.cy - n._y) * s.centerStrength * s.alpha;
+    for (const node of this.nodes) {
+      node._vx += (s.cx - node._x) * s.centerStrength * s.alpha;
+      node._vy += (s.cy - node._y) * s.centerStrength * s.alpha;
 
-      n._vx *= s.velocityDecay;
-      n._vy *= s.velocityDecay;
-      n._x += n._vx;
-      n._y += n._vy;
+      node._vx *= s.velocityDecay;
+      node._vy *= s.velocityDecay;
+      node._x += node._vx;
+      node._y += node._vy;
+
+      if (!isFiniteCoord(node._x) || !isFiniteCoord(node._y) || !Number.isFinite(node._vx) || !Number.isFinite(node._vy)) {
+        resetNodePosition(node, s.cx, s.cy, spreadX, spreadY);
+      }
     }
 
     s.alpha *= 1 - s.alphaDecay;
@@ -568,32 +675,31 @@ export class CanvasGraph {
     const hasSelection = Boolean(this.selected.nodeId || this.selected.edge);
     const focusMode = Boolean(hasSelection || this.searchTerm || this.highlightSinceMs);
 
-    // Keep edges readable even when searching/highlighting; only dim them when a specific node/edge is selected.
     const baseEdgeAlpha = hasSelection ? 0.10 : 0.22;
     ctx.lineWidth = 1 / this.scale;
     ctx.strokeStyle = `rgba(80, 210, 255, ${baseEdgeAlpha})`;
-	    for (const e of this.edges) {
-      const a = this.nodeIndex.get(e.source);
-      const b = this.nodeIndex.get(e.target);
+    for (const edge of this.edges) {
+      const a = this.nodeIndex.get(edge.source);
+      const b = this.nodeIndex.get(edge.target);
       if (!a || !b) continue;
       const isSelected =
         this.selected.edge &&
-        this.selected.edge.source === e.source &&
-        this.selected.edge.target === e.target &&
-        this.selected.edge.type === e.type;
+        this.selected.edge.source === edge.source &&
+        this.selected.edge.target === edge.target &&
+        this.selected.edge.type === edge.type;
       const isLinkedToSelectedNode =
-        this.selected.nodeId && (this.selected.nodeId === e.source || this.selected.nodeId === e.target);
+        this.selected.nodeId && (this.selected.nodeId === edge.source || this.selected.nodeId === edge.target);
       ctx.beginPath();
       ctx.moveTo(a._x, a._y);
       ctx.lineTo(b._x, b._y);
-	      if (isSelected) {
-	        ctx.save();
-	        ctx.strokeStyle = "rgba(0, 255, 214, 0.95)";
-	        ctx.lineWidth = 3.2 / this.scale;
-	        ctx.shadowColor = "rgba(0,255,214,0.35)";
-	        ctx.shadowBlur = 16;
-	        ctx.stroke();
-	        ctx.restore();
+      if (isSelected) {
+        ctx.save();
+        ctx.strokeStyle = "rgba(0, 255, 214, 0.95)";
+        ctx.lineWidth = 3.2 / this.scale;
+        ctx.shadowColor = "rgba(0,255,214,0.35)";
+        ctx.shadowBlur = 16;
+        ctx.stroke();
+        ctx.restore();
       } else if (isLinkedToSelectedNode) {
         ctx.save();
         ctx.strokeStyle = "rgba(0, 255, 214, 0.55)";
@@ -603,23 +709,25 @@ export class CanvasGraph {
       } else {
         ctx.stroke();
       }
-	    }
+    }
 
     const tNow = nowMs();
-    for (const n of this.nodes) {
-      const kind = n.kind || "unknown";
+    for (const node of this.nodes) {
+      if (!isFiniteCoord(node._x) || !isFiniteCoord(node._y)) continue;
+
+      const kind = node.kind || "unknown";
       const color = KIND_COLORS[kind] || KIND_COLORS.unknown;
       const shape = KIND_SHAPES[kind] || "circle";
 
       const isRecent =
         this.highlightSinceMs != null &&
-        (Number(n.created || 0) >= this.highlightSinceMs || Number(n.updated || 0) >= this.highlightSinceMs);
+        (Number(node.created || 0) >= this.highlightSinceMs || Number(node.updated || 0) >= this.highlightSinceMs);
       const matchesSearch =
         this.searchTerm &&
-        ((n.id || "").toLowerCase().includes(this.searchTerm) || (n.label || "").toLowerCase().includes(this.searchTerm));
-      const isSelectedNode = this.selected.nodeId && this.selected.nodeId === n.id;
+        ((node.id || "").toLowerCase().includes(this.searchTerm) || (node.label || "").toLowerCase().includes(this.searchTerm));
+      const isSelectedNode = this.selected.nodeId && this.selected.nodeId === node.id;
       const isSelectedEdgeEndpoint =
-        this.selected.edge && (this.selected.edge.source === n.id || this.selected.edge.target === n.id);
+        this.selected.edge && (this.selected.edge.source === node.id || this.selected.edge.target === node.id);
 
       const baseR = 6;
       const r = isRecent ? baseR + 2.2 + 1.2 * Math.sin((tNow / 220) % (Math.PI * 2)) : baseR;
@@ -629,35 +737,35 @@ export class CanvasGraph {
       const endpointAlpha = 0.88;
       const selectedAlpha = 1.0;
       const searchAlpha = 0.92;
-	      const alpha = isSelectedNode
-	        ? selectedAlpha
-	        : isSelectedEdgeEndpoint
-	          ? endpointAlpha
-	          : matchesSearch
-	            ? searchAlpha
-	            : isRecent
-	              ? recentAlpha
-	              : dimAlpha;
+      const alpha = isSelectedNode
+        ? selectedAlpha
+        : isSelectedEdgeEndpoint
+          ? endpointAlpha
+          : matchesSearch
+            ? searchAlpha
+            : isRecent
+              ? recentAlpha
+              : dimAlpha;
 
       const isDim = !(isSelectedNode || isSelectedEdgeEndpoint || matchesSearch || isRecent);
       const fill = this.dimMode && isDim ? "#8aa0b6" : color;
 
       ctx.save();
       ctx.globalAlpha = alpha;
-      drawNodeShape(ctx, shape, n._x, n._y, r, fill);
+      drawNodeShape(ctx, shape, node._x, node._y, r, fill);
       ctx.restore();
 
-	      if (isSelectedNode || isSelectedEdgeEndpoint || isRecent || matchesSearch) {
-	        const ringAlpha = isSelectedNode ? 0.95 : isSelectedEdgeEndpoint ? 0.82 : matchesSearch ? 0.75 : 0.55;
-	        ctx.save();
-	        ctx.strokeStyle = `rgba(0, 255, 214, ${ringAlpha})`;
-	        ctx.lineWidth = (isSelectedNode ? 3.6 : isSelectedEdgeEndpoint ? 3.0 : 2.4) / this.scale;
-	        ctx.shadowColor = "rgba(0,255,214,0.38)";
-	        ctx.shadowBlur = isSelectedNode ? 22 : isSelectedEdgeEndpoint ? 18 : 14;
-	        drawNodeStroke(ctx, shape, n._x, n._y, r + (isSelectedNode ? 2.2 : 1.2));
-	        ctx.restore();
-	      }
-	    }
+      if (isSelectedNode || isSelectedEdgeEndpoint || isRecent || matchesSearch) {
+        const ringAlpha = isSelectedNode ? 0.95 : isSelectedEdgeEndpoint ? 0.82 : matchesSearch ? 0.75 : 0.55;
+        ctx.save();
+        ctx.strokeStyle = `rgba(0, 255, 214, ${ringAlpha})`;
+        ctx.lineWidth = (isSelectedNode ? 3.6 : isSelectedEdgeEndpoint ? 3.0 : 2.4) / this.scale;
+        ctx.shadowColor = "rgba(0,255,214,0.38)";
+        ctx.shadowBlur = isSelectedNode ? 22 : isSelectedEdgeEndpoint ? 18 : 14;
+        drawNodeStroke(ctx, shape, node._x, node._y, r + (isSelectedNode ? 2.2 : 1.2));
+        ctx.restore();
+      }
+    }
 
     ctx.restore();
 
