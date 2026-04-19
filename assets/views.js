@@ -201,6 +201,10 @@ export function renderGraph() {
   const selectionJson = root.querySelector("#selectionJson");
 
   let fullData = { nodes: [], edges: [] };
+  let guardInfo = { duplicateNodes: 0, danglingEdges: 0 };
+  const AUTO_LIMIT_NODE_THRESHOLD = 1500;
+  const AUTO_LIMIT_EDGE_THRESHOLD = 3000;
+  const AUTO_LIMIT_MAX_NODES = 10000;
   const kindLabels = {
     "znt-i": "I 类智能体",
     "znt-ii": "II 类智能体",
@@ -223,6 +227,62 @@ export function renderGraph() {
   let dimMode = (localStorage.getItem("KG_GRAPH_DIM_MODE") || "0") === "1";
   graph.setDimMode(dimMode);
 
+  function getEffectiveMaxNodes(totalNodes, totalEdges) {
+    if (maxNodes > 0) return { value: maxNodes, autoLimited: false };
+    const tooLarge = totalNodes > AUTO_LIMIT_NODE_THRESHOLD || totalEdges > AUTO_LIMIT_EDGE_THRESHOLD;
+    if (tooLarge) {
+      return { value: AUTO_LIMIT_MAX_NODES, autoLimited: true };
+    }
+    return { value: 0, autoLimited: false };
+  }
+
+  function normalizeGraphPayload(payload) {
+    const byId = new Map();
+    const normalizedNodes = [];
+    let duplicateNodes = 0;
+    let danglingEdges = 0;
+
+    for (const node of Array.isArray(payload?.nodes) ? payload.nodes : []) {
+      const nodeId = node?.id;
+      if (!nodeId) continue;
+      const existing = byId.get(nodeId);
+      if (existing) {
+        duplicateNodes += 1;
+        if (existing.kind !== node?.kind) {
+          console.warn("[graph] duplicate node id dropped", {
+            id: nodeId,
+            keptKind: existing.kind,
+            droppedKind: node?.kind,
+          });
+        }
+        continue;
+      }
+      byId.set(nodeId, node);
+      normalizedNodes.push(node);
+    }
+
+    const nodeIds = new Set(normalizedNodes.map((n) => n.id));
+    const normalizedEdges = [];
+    for (const edge of Array.isArray(payload?.edges) ? payload.edges : []) {
+      if (!nodeIds.has(edge?.source) || !nodeIds.has(edge?.target)) {
+        danglingEdges += 1;
+        continue;
+      }
+      normalizedEdges.push(edge);
+    }
+
+    return {
+      data: {
+        nodes: normalizedNodes,
+        edges: normalizedEdges,
+      },
+      guardInfo: {
+        duplicateNodes,
+        danglingEdges,
+      },
+    };
+  }
+
   function applyFilters() {
     let nodes = fullData.nodes.filter((n) => enabledKinds.has(n.kind || "unknown"));
 
@@ -240,7 +300,9 @@ export function renderGraph() {
       edges = edges.filter((e) => ids2.has(e.source) && ids2.has(e.target));
     }
 
-    if (maxNodes > 0 && nodes.length > maxNodes) {
+    const { value: effectiveMaxNodes, autoLimited } = getEffectiveMaxNodes(nodes.length, edges.length);
+    const shouldPruneByAutoLimit = autoLimited && effectiveMaxNodes > 0 && nodes.length > effectiveMaxNodes;
+    if (effectiveMaxNodes > 0 && nodes.length > effectiveMaxNodes) {
       const degree = new Map();
       for (const e of edges) {
         degree.set(e.source, (degree.get(e.source) || 0) + 1);
@@ -249,12 +311,26 @@ export function renderGraph() {
       nodes = nodes
         .slice()
         .sort((a, b) => (degree.get(b.id) || 0) - (degree.get(a.id) || 0))
-        .slice(0, maxNodes);
+        .slice(0, effectiveMaxNodes);
       const ids3 = new Set(nodes.map((n) => n.id));
       edges = edges.filter((e) => ids3.has(e.source) && ids3.has(e.target));
     }
 
     graph.setData({ nodes, edges });
+    const guardText = [];
+    if (guardInfo.duplicateNodes > 0) {
+      guardText.push(`前端已忽略 ${guardInfo.duplicateNodes} 个重复节点`);
+    }
+    if (guardInfo.danglingEdges > 0) {
+      guardText.push(`前端已丢弃 ${guardInfo.danglingEdges} 条无效边`);
+    }
+    if (graph.isStaticLayout()) {
+      guardText.push("大图已切换为静态布局");
+    }
+    meta.textContent =
+      `nodes=${nodes.length}/${fullData.nodes.length} edges=${edges.length}/${fullData.edges.length}（来源：/ui/api/graph）` +
+      (shouldPruneByAutoLimit ? `；大图已自动限流到 ${effectiveMaxNodes} 节点` : "") +
+      (guardText.length ? `；${guardText.join("，")}` : "");
   }
 
   function renderFilters() {
@@ -299,15 +375,22 @@ export function renderGraph() {
       meta.textContent = `加载失败：HTTP ${status} ${JSON.stringify(payload)}`;
       return;
     }
-    if (!payload || !Array.isArray(payload.nodes)) {
+    if (!payload || !Array.isArray(payload.nodes) || !Array.isArray(payload.edges)) {
       meta.textContent = `加载失败：响应数据格式无效`;
       fullData = { nodes: [], edges: [] };
+      guardInfo = { duplicateNodes: 0, danglingEdges: 0 };
       return;
     }
-    fullData = payload;
+    const normalized = normalizeGraphPayload(payload);
+    fullData = normalized.data;
+    guardInfo = normalized.guardInfo;
     renderFilters();
-    applyFilters();
-    meta.textContent = `nodes=${payload.nodes.length} edges=${payload.edges.length}（来源：/ui/api/graph）`;
+    try {
+      applyFilters();
+    } catch (err) {
+      console.error("[graph] applyFilters failed", err);
+      meta.textContent = `图谱渲染失败：${err?.message || err}`;
+    }
   }
 
   root.querySelector("#graphReload").addEventListener("click", load);

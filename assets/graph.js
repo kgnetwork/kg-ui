@@ -18,6 +18,9 @@ const KIND_SHAPES = {
   unknown: "circle",
 };
 
+const STATIC_LAYOUT_NODE_THRESHOLD = 10000;
+const STATIC_LAYOUT_EDGE_THRESHOLD = 5000;
+
 function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
 }
@@ -180,6 +183,7 @@ export class CanvasGraph {
     this.dimMode = false;
     this._sim = null;
     this._raf = 0;
+    this.layoutMode = "simulation";
 
     this._resizeObserver = new ResizeObserver(() => this.resize());
     this._resizeObserver.observe(canvas);
@@ -208,7 +212,11 @@ export class CanvasGraph {
     this.edges = Array.isArray(edges) ? edges : [];
     this.nodeIndex = new Map(this.nodes.map((n) => [n.id, n]));
     this.resetView();
-    this._initSimulation();
+    if (this.nodes.length > STATIC_LAYOUT_NODE_THRESHOLD || this.edges.length > STATIC_LAYOUT_EDGE_THRESHOLD) {
+      this._initStaticLayout();
+    } else {
+      this._initSimulation();
+    }
     this.render();
   }
 
@@ -248,6 +256,10 @@ export class CanvasGraph {
     if (this.selected.edge) return { type: "edge", edge: this.selected.edge };
     if (this.selected.nodeId) return { type: "node", node: this.nodeIndex.get(this.selected.nodeId) || null };
     return { type: "none" };
+  }
+
+  isStaticLayout() {
+    return this.layoutMode === "static";
   }
 
   zoom(delta, cx, cy) {
@@ -318,6 +330,7 @@ export class CanvasGraph {
     const rect = this.canvas.getBoundingClientRect();
     const cx = rect.width / 2;
     const cy = rect.height / 2;
+    this.layoutMode = "simulation";
 
     for (const n of this.nodes) {
       if (typeof n._x !== "number" || typeof n._y !== "number") {
@@ -343,6 +356,33 @@ export class CanvasGraph {
       cy,
       boundsPad: 220,
     };
+  }
+
+  _initStaticLayout() {
+    const rect = this.canvas.getBoundingClientRect();
+    const width = Math.max(rect.width, 1200);
+    const height = Math.max(rect.height, 800);
+    const cx = width / 2;
+    const cy = height / 2;
+    const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+    const step = Math.max(10, Math.min(20, Math.sqrt((width * height) / Math.max(this.nodes.length, 1)) * 0.9));
+
+    const orderedNodes = this.nodes
+      .slice()
+      .sort((a, b) => String(a.kind || "").localeCompare(String(b.kind || "")) || String(a.id || "").localeCompare(String(b.id || "")));
+
+    for (let i = 0; i < orderedNodes.length; i++) {
+      const n = orderedNodes[i];
+      const radius = step * Math.sqrt(i);
+      const angle = i * goldenAngle;
+      n._x = cx + Math.cos(angle) * radius;
+      n._y = cy + Math.sin(angle) * radius;
+      n._vx = 0;
+      n._vy = 0;
+    }
+
+    this.layoutMode = "static";
+    this._sim = null;
   }
 
   _worldToScreen(x, y) {
