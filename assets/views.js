@@ -328,8 +328,11 @@ export function renderGraph() {
     if (guardInfo.danglingEdges > 0) {
       guardText.push(`前端已丢弃 ${guardInfo.danglingEdges} 条无效边`);
     }
-    if (graph.isStaticLayout()) {
+    const layoutMode = typeof graph.getLayoutMode === "function" ? graph.getLayoutMode() : "simulation";
+    if (layoutMode === "static") {
       guardText.push("大图已切换为静态布局");
+    } else if (layoutMode === "radial") {
+      guardText.push("当前子图已切换为径向布局");
     }
     meta.textContent =
       `nodes=${nodes.length}/${fullData.nodes.length} edges=${edges.length}/${fullData.edges.length}（来源：/ui/api/graph）` +

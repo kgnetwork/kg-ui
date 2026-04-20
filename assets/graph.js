@@ -18,10 +18,12 @@ const KIND_SHAPES = {
   unknown: "circle",
 };
 
-const STATIC_LAYOUT_NODE_THRESHOLD = 10000;
+const STATIC_LAYOUT_NODE_THRESHOLD = 5000;
 const STATIC_LAYOUT_EDGE_THRESHOLD = 5000;
 const MAX_COORD_ABS = 200000;
 const FIT_MIN_SCALE = 0.02;
+const RADIAL_LAYOUT_LEAF_RATIO_THRESHOLD = 0.75;
+const RADIAL_LAYOUT_HUB_DEGREE_THRESHOLD = 100;
 
 function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
@@ -221,6 +223,7 @@ export class CanvasGraph {
   }
 
   setData({ nodes, edges }) {
+    const prevLayoutMode = this.layoutMode;
     this.nodes = Array.isArray(nodes) ? nodes : [];
     this.edges = Array.isArray(edges) ? edges : [];
     this.nodeIndex = new Map(this.nodes.map((n) => [n.id, n]));
@@ -232,10 +235,24 @@ export class CanvasGraph {
       return;
     }
 
-    if (this.nodes.length > STATIC_LAYOUT_NODE_THRESHOLD || this.edges.length > STATIC_LAYOUT_EDGE_THRESHOLD) {
+    const targetLayoutMode =
+      this.nodes.length > STATIC_LAYOUT_NODE_THRESHOLD || this.edges.length > STATIC_LAYOUT_EDGE_THRESHOLD
+        ? "static"
+        : "simulation";
+
+    if (targetLayoutMode === "static") {
       this._initStaticLayout();
+    } else if (this._shouldUseRadialLayout()) {
+      this._initRadialLayout();
     } else {
-      this._initSimulation();
+      const fromStatic = prevLayoutMode === "static";
+      this._initSimulation(fromStatic);
+      if (fromStatic) {
+        this._warmupSimulation(320, this._sim ? this._sim.alphaMin : 0);
+        if (this._sim) {
+          this._sim.alpha = Math.min(this._sim.alpha, this._sim.alphaMin * 0.5);
+        }
+      }
     }
 
     if (this._needsAutoFit()) {
@@ -323,7 +340,11 @@ export class CanvasGraph {
   }
 
   isStaticLayout() {
-    return this.layoutMode === "static";
+    return this.layoutMode !== "simulation";
+  }
+
+  getLayoutMode() {
+    return this.layoutMode;
   }
 
   zoom(delta, cx, cy) {
@@ -425,7 +446,7 @@ export class CanvasGraph {
     });
   }
 
-  _initSimulation() {
+  _initSimulation(forceReset = false) {
     const rect = this.canvas.getBoundingClientRect();
     const cx = rect.width / 2;
     const cy = rect.height / 2;
@@ -434,7 +455,7 @@ export class CanvasGraph {
     const spreadY = Math.max(rect.height * 0.6, 200);
 
     for (const node of this.nodes) {
-      if (!isFiniteCoord(node._x) || !isFiniteCoord(node._y)) {
+      if (forceReset || !isFiniteCoord(node._x) || !isFiniteCoord(node._y)) {
         resetNodePosition(node, cx, cy, spreadX, spreadY);
       }
       if (!Number.isFinite(node._vx)) node._vx = 0;
@@ -456,6 +477,14 @@ export class CanvasGraph {
       cy,
       boundsPad: 220,
     };
+  }
+
+  _warmupSimulation(maxIterations = 0, targetAlpha = 0) {
+    if (!this._sim || maxIterations <= 0) return;
+    for (let i = 0; i < maxIterations; i++) {
+      if (!this._tickSimulation()) break;
+      if (targetAlpha > 0 && this._sim && this._sim.alpha <= targetAlpha) break;
+    }
   }
 
   _initStaticLayout() {
@@ -482,6 +511,103 @@ export class CanvasGraph {
     }
 
     this.layoutMode = "static";
+    this._sim = null;
+  }
+
+  _shouldUseRadialLayout() {
+    if (!this.nodes.length || !this.edges.length) return false;
+    const degree = new Map();
+    for (const edge of this.edges) {
+      degree.set(edge.source, (degree.get(edge.source) || 0) + 1);
+      degree.set(edge.target, (degree.get(edge.target) || 0) + 1);
+    }
+
+    let leafCount = 0;
+    let maxDegree = 0;
+    for (const node of this.nodes) {
+      const d = degree.get(node.id) || 0;
+      if (d === 1) leafCount += 1;
+      if (d > maxDegree) maxDegree = d;
+    }
+
+    return (
+      leafCount / Math.max(this.nodes.length, 1) >= RADIAL_LAYOUT_LEAF_RATIO_THRESHOLD &&
+      maxDegree >= RADIAL_LAYOUT_HUB_DEGREE_THRESHOLD
+    );
+  }
+
+  _initRadialLayout() {
+    const rect = this.canvas.getBoundingClientRect();
+    const width = Math.max(rect.width, 1200);
+    const height = Math.max(rect.height, 800);
+    const cx = width / 2;
+    const cy = height / 2;
+
+    const nodeById = new Map(this.nodes.map((node) => [node.id, node]));
+    const degree = new Map();
+    const adj = new Map();
+    for (const node of this.nodes) adj.set(node.id, []);
+    for (const edge of this.edges) {
+      degree.set(edge.source, (degree.get(edge.source) || 0) + 1);
+      degree.set(edge.target, (degree.get(edge.target) || 0) + 1);
+      if (adj.has(edge.source) && adj.has(edge.target)) {
+        adj.get(edge.source).push(edge.target);
+        adj.get(edge.target).push(edge.source);
+      }
+    }
+
+    const rootId = this.nodes
+      .slice()
+      .sort((a, b) => (degree.get(b.id) || 0) - (degree.get(a.id) || 0) || String(a.id).localeCompare(String(b.id)))[0]?.id;
+
+    if (!rootId) {
+      this._initStaticLayout();
+      return;
+    }
+
+    const depth = new Map([[rootId, 0]]);
+    const layers = new Map([[0, [rootId]]]);
+    const queue = [rootId];
+    while (queue.length) {
+      const current = queue.shift();
+      const nextDepth = depth.get(current) + 1;
+      const neighbors = (adj.get(current) || []).slice().sort((a, b) => {
+        return (degree.get(b) || 0) - (degree.get(a) || 0) || String(a).localeCompare(String(b));
+      });
+      for (const neighbor of neighbors) {
+        if (depth.has(neighbor)) continue;
+        depth.set(neighbor, nextDepth);
+        if (!layers.has(nextDepth)) layers.set(nextDepth, []);
+        layers.get(nextDepth).push(neighbor);
+        queue.push(neighbor);
+      }
+    }
+
+    const radiusStep = Math.max(56, Math.min(110, Math.min(width, height) / 7));
+    for (const [layerIndex, ids] of Array.from(layers.entries()).sort((a, b) => a[0] - b[0])) {
+      if (layerIndex === 0) {
+        const root = nodeById.get(ids[0]);
+        root._x = cx;
+        root._y = cy;
+        root._vx = 0;
+        root._vy = 0;
+        continue;
+      }
+
+      const radius = layerIndex * radiusStep;
+      const angleStep = (Math.PI * 2) / Math.max(ids.length, 1);
+      ids.sort((a, b) => String(a).localeCompare(String(b)));
+      for (let i = 0; i < ids.length; i++) {
+        const node = nodeById.get(ids[i]);
+        const angle = i * angleStep - Math.PI / 2;
+        node._x = cx + Math.cos(angle) * radius;
+        node._y = cy + Math.sin(angle) * radius;
+        node._vx = 0;
+        node._vy = 0;
+      }
+    }
+
+    this.layoutMode = "radial";
     this._sim = null;
   }
 
