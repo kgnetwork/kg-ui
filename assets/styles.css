@@ -270,10 +270,24 @@ body {
   overflow: auto;
 }
 
+.panel--scroll-xl .panel__bd {
+  height: 560px;
+  min-height: 560px;
+  max-height: none;
+  resize: vertical;
+  overflow: auto;
+}
+
 pre.codeblock {
   margin: 0;
   white-space: pre;
   overflow: auto;
+}
+
+#statusLog.codeblock {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .canvas-wrap {

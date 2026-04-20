@@ -468,7 +468,7 @@ export function renderImport() {
               <div style="margin-top:10px;">
                 <a class="btn btn--ghost" id="downloadJobLog" target="_blank" href="#" style="display:none;">下载日志</a>
               </div>
-	              <div class="panel panel--scroll" style="margin-top:10px;">
+	              <div class="panel panel--scroll panel--scroll-xl" style="margin-top:10px;">
 	                <div class="panel__hd">日志（tail）</div>
 	                <div class="panel__bd"><pre class="codeblock mono" id="importLogTail"></pre></div>
 	              </div>
@@ -1259,6 +1259,14 @@ export function renderRefresh() {
             <option value="30">最近 30 分钟</option>
             <option value="120">最近 2 小时</option>
           </select>
+          <select class="select" id="statusAutoInterval" style="width:140px;">
+            <option value="10">刷新间隔：10s</option>
+            <option value="30">刷新间隔：30s</option>
+            <option value="60">刷新间隔：60s</option>
+            <option value="120">刷新间隔：120s</option>
+            <option value="180">刷新间隔：180s</option>
+            <option value="300">刷新间隔：300s</option>
+          </select>
           <button class="btn" id="statusReload">刷新</button>
           <button class="btn btn--ghost" id="statusAuto">自动刷新：关</button>
         </div>
@@ -1269,23 +1277,21 @@ export function renderRefresh() {
             <div class="panel__hd">统计（/status）</div>
             <div class="panel__bd">
               <div class="muted" id="statusMeta">-</div>
-	              <div class="panel panel--scroll" style="margin-top:10px;">
-	                <div class="panel__hd">原始响应</div>
+	              <div class="panel panel--scroll panel--scroll-xl" style="margin-top:10px;">
+	                <div class="panel__hd">状态数据</div>
 	                <div class="panel__bd"><pre class="codeblock mono" id="statusJson"></pre></div>
 	              </div>
             </div>
           </div>
           <div class="panel">
-            <div class="panel__hd">操作</div>
+            <div class="panel__hd">刷新日志</div>
             <div class="panel__bd">
               <div class="form">
-                <div class="form__hint">手动刷新：重新拉取图谱数据并渲染，建议在“图谱视图”页面操作。</div>
+                <div class="form__hint">日志只保存在当前页面内存中，刷新整个页面后重置。</div>
                 <a class="btn" href="#/graph">进入图谱视图</a>
-                <div class="form__hint">自动刷新条件导入：此版本先在浏览器本地保存（localStorage），用于前端轮询展示。</div>
-                <textarea class="textarea" id="refreshRules" placeholder='{\"interval_seconds\": 10, \"highlight_minutes\": 5}'></textarea>
-                <div class="form__actions">
-                  <button class="btn" id="saveRules">保存条件</button>
-                  <button class="btn btn--ghost" id="loadRules">加载已保存</button>
+                <div class="panel panel--scroll panel--scroll-xl" style="margin-top:10px;">
+                  <div class="panel__hd">最近刷新记录</div>
+                  <div class="panel__bd"><pre class="codeblock mono" id="statusLog"></pre></div>
                 </div>
               </div>
             </div>
@@ -1297,46 +1303,94 @@ export function renderRefresh() {
 
   const meta = root.querySelector("#statusMeta");
   const jsonEl = root.querySelector("#statusJson");
+  const logEl = root.querySelector("#statusLog");
   const sel = root.querySelector("#statusWindow");
+  const intervalSel = root.querySelector("#statusAutoInterval");
   const autoBtn = root.querySelector("#statusAuto");
   let autoTimer = 0;
+  let lastStatusSummary = "-";
+  const refreshLogs = [];
+  const defaultIntervalSeconds = 10;
+  const savedIntervalSeconds = Number(localStorage.getItem("KG_STATUS_AUTO_REFRESH_SECONDS") || defaultIntervalSeconds);
+  const validIntervalSeconds = [10, 30, 60, 120, 180, 300].includes(savedIntervalSeconds)
+    ? savedIntervalSeconds
+    : defaultIntervalSeconds;
+  intervalSel.value = String(validIntervalSeconds);
 
-  async function load() {
+  function currentIntervalSeconds() {
+    const seconds = Number(intervalSel.value || defaultIntervalSeconds);
+    return [10, 30, 60, 120, 180, 300].includes(seconds) ? seconds : defaultIntervalSeconds;
+  }
+
+  function renderMeta() {
+    const autoState = autoTimer ? `自动刷新=开（${currentIntervalSeconds()}s）` : `自动刷新=关（间隔 ${currentIntervalSeconds()}s）`;
+    meta.textContent = `${lastStatusSummary}；${autoState}`;
+  }
+
+  function appendRefreshLog(trigger, ok, summary) {
+    refreshLogs.unshift(`${fmtTs(Date.now())} [${trigger}] ${ok ? "OK" : "ERR"} ${summary}`);
+    if (refreshLogs.length > 50) refreshLogs.length = 50;
+    logEl.textContent = refreshLogs.join("\n");
+  }
+
+  function updateAutoButton() {
+    if (!autoTimer) {
+      autoBtn.textContent = "自动刷新：关";
+      renderMeta();
+      return;
+    }
+    autoBtn.textContent = `自动刷新：开（${currentIntervalSeconds()}s）`;
+    renderMeta();
+  }
+
+  function stopAutoRefresh() {
+    if (!autoTimer) return;
+    window.clearInterval(autoTimer);
+    autoTimer = 0;
+    updateAutoButton();
+  }
+
+  function startAutoRefresh() {
+    stopAutoRefresh();
+    const seconds = currentIntervalSeconds();
+    localStorage.setItem("KG_STATUS_AUTO_REFRESH_SECONDS", String(seconds));
+    autoTimer = window.setInterval(() => load("auto"), seconds * 1000);
+    updateAutoButton();
+  }
+
+  async function load(trigger = "manual") {
     const minutes = Number(sel.value || 1);
     const { ok, status, payload } = await apiFetch(`/status${toQuery({ minutes })}`);
     if (!ok) {
-      meta.textContent = `请求失败：HTTP ${status}`;
+      lastStatusSummary = `窗口=${minutes}min 请求失败：HTTP ${status}`;
+      renderMeta();
       jsonEl.textContent = JSON.stringify(payload, null, 2);
+      appendRefreshLog(trigger, false, `window=${minutes}min HTTP ${status}`);
       return;
     }
-    meta.textContent = `窗口=${minutes}min 统计时间=${fmtTs(payload?.window?.since_ms)}~${fmtTs(payload?.window?.until_ms)}`;
+    lastStatusSummary = `窗口=${minutes}min 统计时间=${fmtTs(payload?.window?.since_ms)}~${fmtTs(payload?.window?.until_ms)}`;
+    renderMeta();
     jsonEl.textContent = JSON.stringify(payload, null, 2);
+    appendRefreshLog(trigger, true, `window=${minutes}min ${fmtTs(payload?.window?.since_ms)}~${fmtTs(payload?.window?.until_ms)}`);
   }
 
-  root.querySelector("#statusReload").addEventListener("click", load);
+  root.querySelector("#statusReload").addEventListener("click", () => load("manual"));
   autoBtn.addEventListener("click", () => {
     if (autoTimer) {
-      window.clearInterval(autoTimer);
-      autoTimer = 0;
-      autoBtn.textContent = "自动刷新：关";
+      stopAutoRefresh();
       return;
     }
-    autoTimer = window.setInterval(load, 5000);
-    autoBtn.textContent = "自动刷新：开";
+    startAutoRefresh();
   });
+  intervalSel.addEventListener("change", () => {
+    localStorage.setItem("KG_STATUS_AUTO_REFRESH_SECONDS", String(currentIntervalSeconds()));
+    if (autoTimer) startAutoRefresh();
+    else renderMeta();
+  });
+  updateAutoButton();
+  logEl.textContent = "暂无刷新记录";
 
-  const rulesEl = root.querySelector("#refreshRules");
-  root.querySelector("#saveRules").addEventListener("click", (e) => {
-    e.preventDefault();
-    localStorage.setItem("KG_REFRESH_RULES", rulesEl.value || "");
-  });
-  root.querySelector("#loadRules").addEventListener("click", (e) => {
-    e.preventDefault();
-    rulesEl.value = localStorage.getItem("KG_REFRESH_RULES") || "";
-  });
-  rulesEl.value = localStorage.getItem("KG_REFRESH_RULES") || "";
-
-  setTimeout(load, 0);
+  setTimeout(() => load("initial"), 0);
   return root;
 }
 
